@@ -1,14 +1,16 @@
 from collections.abc import Sequence
 from typing import Literal
 
-from langchain.messages import HumanMessage, SystemMessage
+from langchain.messages import HumanMessage, RemoveMessage, SystemMessage
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
 
 from .guardrails import guard_output, make_guard_input, route_after_input
+from .memory import intermediate, make_compact
 from .prompts import GRADE_PROMPT, REWRITE_PROMPT, SYSTEM_PROMPT
 from .rag import SEARCH_TOOL
 from .state import AgentState
@@ -23,7 +25,10 @@ class GradeDocuments(BaseModel):
 
 
 def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()):
-    """Monta o grafo do agente: o modelo decide quando buscar, e trechos ruins levam a uma nova consulta."""
+    """Monta o grafo do agente: o modelo decide quando buscar, e trechos ruins levam a uma nova consulta.
+
+    O checkpointer guarda cada conversa sob um thread_id, passado em config ao invocar o grafo.
+    """
     model_with_tools = model.bind_tools(list(tools)) if tools else model
 
     async def start_turn(state: AgentState) -> dict:
@@ -31,8 +36,11 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()):
         return {"question": state["messages"][-1].content, "rewrites": 0}
 
     async def agent(state: AgentState) -> dict:
-        """Chama o modelo com o prompt de sistema e o histórico da conversa."""
-        reply = await model_with_tools.ainvoke([SystemMessage(SYSTEM_PROMPT)] + state["messages"])
+        """Chama o modelo com o prompt de sistema, o resumo dos turnos antigos e o histórico recente."""
+        system = SYSTEM_PROMPT
+        if state.get("summary"):
+            system += f"\n\n# Resumo da conversa anterior\n{state['summary']}"
+        reply = await model_with_tools.ainvoke([SystemMessage(system)] + state["messages"])
         return {"messages": [reply]}
 
     def route_after_agent(state: AgentState) -> Literal["tools", "guard_output"]:
@@ -55,10 +63,14 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()):
         return "agent" if verdict.binary_score == "sim" else "rewrite"
 
     async def rewrite(state: AgentState) -> dict:
-        """Reescreve a pergunta com os termos do edital e manda o agente buscar de novo."""
+        """Reescreve a pergunta com os termos do edital, descarta a busca que falhou e manda o agente buscar de novo."""
         rewritten = (await model.ainvoke(REWRITE_PROMPT.format(question=state["question"]))).content
-        message = HumanMessage(f"Os trechos não responderam à pergunta. Busque de novo com esta consulta reformulada: {rewritten}")
-        return {"messages": [message], "rewrites": state["rewrites"] + 1}
+        message = HumanMessage(
+            f"Os trechos não responderam à pergunta. Busque de novo com esta consulta reformulada: {rewritten}",
+            additional_kwargs={"rewrite": True},  # marca a mensagem para o resumo e a interface a distinguirem de uma pergunta
+        )
+        failed = [RemoveMessage(id=m.id) for m in intermediate(state["messages"], state["question"])]  # a busca ruim sai do contexto
+        return {"messages": [*failed, message], "rewrites": state["rewrites"] + 1}
 
     builder = StateGraph(AgentState)
 
@@ -69,14 +81,16 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()):
     builder.add_node("tools", ToolNode(list(tools)))
     builder.add_node("rewrite", rewrite)
     builder.add_node("guard_output", guard_output)
+    builder.add_node("compact", make_compact(model))
 
     # arestas
     builder.add_edge(START, "guard_input")
     builder.add_conditional_edges("guard_input", route_after_input)
     builder.add_edge("start_turn", "agent")
     builder.add_conditional_edges("agent", route_after_agent)
-    builder.add_edge("guard_output", END)
+    builder.add_edge("guard_output", "compact")
+    builder.add_edge("compact", END)
     builder.add_conditional_edges("tools", route_after_tools)
     builder.add_edge("rewrite", "agent")
 
-    return builder.compile()
+    return builder.compile(checkpointer=InMemorySaver())

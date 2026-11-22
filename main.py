@@ -1,5 +1,6 @@
 """Chat de teste pelo terminal. Será substituído pela interface em Streamlit."""
 import asyncio
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from langchain.messages import HumanMessage
@@ -9,8 +10,11 @@ from agente.model import get_model
 from agente.rag import search_dataprev
 
 
-def mostrar(node: str, update: dict) -> None:
+def mostrar(node: str, update: dict | None) -> None:
     """Imprime o que cada nó produziu: chamadas de ferramenta, observações e respostas."""
+    update = update or {}  # nós que não alteram o estado devolvem None
+    if update.get("summary"):
+        print("  resumo:", update["summary"])
     for message in update.get("messages", []):
         if message.type == "tool":
             print(f"  saída: {message.content[:80]!r}")
@@ -25,8 +29,13 @@ def mostrar(node: str, update: dict) -> None:
 
 async def main() -> None:
     graph = build_graph(get_model(), [search_dataprev])
+    config = {"configurable": {"thread_id": str(uuid4())}}
     while question := input("você: ").strip():
-        async for step in graph.astream({"messages": [HumanMessage(question)]}, stream_mode="updates"):
+        if question == "/nova":  # nova conversa: outra thread, sem o histórico da anterior
+            config = {"configurable": {"thread_id": str(uuid4())}}
+            print("nova conversa")
+            continue
+        async for step in graph.astream({"messages": [HumanMessage(question)]}, config, stream_mode="updates"):
             for node, update in step.items():
                 mostrar(node, update)
 
