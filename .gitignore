@@ -1,0 +1,6 @@
+.env
+__pycache__/
+.venv/
+venv/
+checkpoints.db
+chroma_dataprev/
