@@ -4,10 +4,11 @@ from typing import Literal
 from langchain.messages import HumanMessage, SystemMessage
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
-from langgraph.graph import START, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.graph import END, START, StateGraph
+from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
 
+from .guardrails import guard_output, make_guard_input, route_after_input
 from .prompts import GRADE_PROMPT, REWRITE_PROMPT, SYSTEM_PROMPT
 from .rag import SEARCH_TOOL
 from .state import AgentState
@@ -34,6 +35,10 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()):
         reply = await model_with_tools.ainvoke([SystemMessage(SYSTEM_PROMPT)] + state["messages"])
         return {"messages": [reply]}
 
+    def route_after_agent(state: AgentState) -> Literal["tools", "guard_output"]:
+        """Se o modelo pediu ferramentas, executa-as; senão a resposta passa pelo guardrail de saída."""
+        return "tools" if state["messages"][-1].tool_calls else "guard_output"
+
     async def route_after_tools(state: AgentState) -> Literal["agent", "rewrite"]:
         """Se a última ferramenta foi a busca, avalia os trechos; trechos ruins pedem uma reescrita."""
         observed = []
@@ -58,15 +63,19 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()):
     builder = StateGraph(AgentState)
 
     # nós
+    builder.add_node("guard_input", make_guard_input(model))
     builder.add_node("start_turn", start_turn)
     builder.add_node("agent", agent)
     builder.add_node("tools", ToolNode(list(tools)))
     builder.add_node("rewrite", rewrite)
+    builder.add_node("guard_output", guard_output)
 
     # arestas
-    builder.add_edge(START, "start_turn")
+    builder.add_edge(START, "guard_input")
+    builder.add_conditional_edges("guard_input", route_after_input)
     builder.add_edge("start_turn", "agent")
-    builder.add_conditional_edges("agent", tools_condition)
+    builder.add_conditional_edges("agent", route_after_agent)
+    builder.add_edge("guard_output", END)
     builder.add_conditional_edges("tools", route_after_tools)
     builder.add_edge("rewrite", "agent")
 

@@ -19,7 +19,7 @@ def mostrar(node: str, update: dict) -> None:
                 print("  chamada:", call["name"], call["args"])
         elif node == "rewrite":
             print("  reescrita:", message.content)
-        else:
+        elif node in ("guard_input", "guard_output"):  # a resposta final sai sempre por um guardrail
             print("assistente:", message.content)
 
 
