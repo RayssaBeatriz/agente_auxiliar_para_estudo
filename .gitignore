@@ -4,3 +4,6 @@ __pycache__/
 venv/
 checkpoints.db
 chroma_dataprev/
+planos/
+.pytest_cache/
+checkpoints.db*
