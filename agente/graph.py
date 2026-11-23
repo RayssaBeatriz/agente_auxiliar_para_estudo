@@ -63,14 +63,16 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()):
         return "agent" if verdict.binary_score == "sim" else "rewrite"
 
     async def rewrite(state: AgentState) -> dict:
-        """Reescreve a pergunta com os termos do edital, descarta a busca que falhou e manda o agente buscar de novo."""
-        rewritten = (await model.ainvoke(REWRITE_PROMPT.format(question=state["question"]))).content
+        """Reescreve a consulta que falhou com outros termos, descarta essa busca e manda o agente buscar de novo."""
+        steps = intermediate(state["messages"], state["question"])
+        queries = [call["args"].get("query", "") for m in steps for call in getattr(m, "tool_calls", []) if call["name"] == SEARCH_TOOL]
+        failed = queries[-1] if queries else state["question"]
+        rewritten = (await model.ainvoke(REWRITE_PROMPT.format(question=state["question"], failed=failed))).content
         message = HumanMessage(
             f"Os trechos não responderam à pergunta. Busque de novo com esta consulta reformulada: {rewritten}",
-            additional_kwargs={"rewrite": True},  # marca a mensagem para o resumo e a interface a distinguirem de uma pergunta
+            additional_kwargs={"rewrite": True, "query": rewritten},  # marca a mensagem para o resumo e a interface a distinguirem de uma pergunta
         )
-        failed = [RemoveMessage(id=m.id) for m in intermediate(state["messages"], state["question"])]  # a busca ruim sai do contexto
-        return {"messages": [*failed, message], "rewrites": state["rewrites"] + 1}
+        return {"messages": [*(RemoveMessage(id=m.id) for m in steps), message], "rewrites": state["rewrites"] + 1}  # a busca ruim sai do contexto
 
     builder = StateGraph(AgentState)
 
