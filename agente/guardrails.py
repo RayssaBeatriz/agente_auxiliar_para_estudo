@@ -6,7 +6,7 @@ from langchain.messages import AIMessage
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, Field
 
-from .prompts import GRADE_PROMPT, GUARD_PROMPT, REWRITE_PROMPT, SYSTEM_PROMPT
+from .prompts import GRADE_PROMPT, GUARD_PROMPT, REWRITE_PROMPT, SUMMARY_PROMPT, SYSTEM_PROMPT
 from .rag import SEARCH_TOOL
 from .state import AgentState
 
@@ -19,7 +19,7 @@ CITACAO = re.compile(r"\(Concurso (2024|2026)")
 # linhas dos prompts internos longas o bastante para identificar um vazamento
 TRECHOS = [
     linha.strip().lower()
-    for prompt in (SYSTEM_PROMPT, GRADE_PROMPT, REWRITE_PROMPT, GUARD_PROMPT)
+    for prompt in (SYSTEM_PROMPT, GRADE_PROMPT, REWRITE_PROMPT, GUARD_PROMPT, SUMMARY_PROMPT)
     for linha in prompt.splitlines()
     if len(linha.strip()) >= 30
 ]
