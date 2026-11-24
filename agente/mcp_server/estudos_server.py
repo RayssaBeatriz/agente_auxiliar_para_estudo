@@ -48,16 +48,19 @@ def consultar_concorrencia(edital: Edital, perfil: str = "", localidade: str = "
 
 @mcp.tool()
 def search_dataprev(query: str, edital: Literal["2024", "2026", "todos"] = "todos") -> str:
-    """Busca trechos dos editais e documentos do concurso da Dataprev. Use edital '2024' ou '2026' quando a pergunta citar um deles, e 'todos' para comparar ou quando não citar."""
+    """Busca trechos dos editais e documentos do concurso da Dataprev. Use edital '2024' ou '2026' quando a pergunta citar um deles, e 'todos' para comparar ou quando não citar. Para vagas, candidatos ou candidatos por vaga, use consultar_concorrencia."""
     return rag.search_dataprev.invoke({"query": query, "edital": edital})
 
 
 @mcp.tool()
-def estimar_posicao(edital: Edital, perfil: str, localidade: str, nota: float) -> dict:
+def estimar_posicao(edital: Literal["2024", "2026", "todos"], perfil: str, localidade: str, nota: float) -> dict:
     """Estima a posição de uma nota (0 a 115) entre os habilitados na prova objetiva de um perfil e localidade,
     usando os resultados reais do concurso, e compara com o total de vagas. Se a nota estiver abaixo de 57,5,
     informa que está abaixo do limiar e não estima posição. Use a nota devolvida por simular_nota, e só chame
-    esta ferramenta se aprovado_na_prova_objetiva for verdadeiro. `perfil` e `localidade` são trechos do nome."""
+    esta ferramenta se aprovado_na_prova_objetiva for verdadeiro. `perfil` e `localidade` são trechos do nome.
+    Com edital 'todos', devolve a estimativa dos dois concursos de uma vez."""
+    if edital == "todos":
+        return {ano: core.estimar_posicao(ano, perfil, localidade, nota) for ano in ("2026", "2024")}
     return core.estimar_posicao(edital, perfil, localidade, nota)
 
 

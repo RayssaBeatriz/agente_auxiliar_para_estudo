@@ -1,12 +1,16 @@
 """RAG sobre os editais e outros documentos do concurso da Dataprev."""
+import math
 import os
 import re
+import unicodedata
+from collections import Counter
 from functools import cache
 from pathlib import Path
 from typing import Literal
 
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import PDFPlumberLoader
+from langchain_core.documents import Document
 from langchain_core.tools import tool
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -14,7 +18,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 DATA_DIR = Path("data")
 INDEX_DIR = "chroma_dataprev"
 SEARCH_TOOL = "search_dataprev"
-K = 3
+K = 5
+STOPWORDS = {"de", "da", "do", "das", "dos", "a", "o", "as", "os", "e", "em", "na", "no", "nas", "nos", "para", "por", "com", "que", "um", "uma", "qual", "quais", "ou", "se", "ao", "aos"}
 
 # arquivo: (concurso, nome do documento)
 DOCS = {
@@ -69,11 +74,55 @@ def get_vector_store() -> Chroma:
     return store
 
 
+def tokenize(text: str) -> list[str]:
+    """Palavras sem acento, cortadas nas cinco primeiras letras (aprovado e aprovação se igualam) e números como 57,5 inteiros."""
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return [w[:5] if w[0].isalpha() else w for w in re.findall(r"\d+[.,]\d+|\w+", text) if w not in STOPWORDS]
+
+
+def bm25(query: str, docs: list[Document], k1: float = 1.5, b: float = 0.75) -> list[Document]:
+    """Ordena os trechos pela coincidência de palavras com a consulta (BM25), o que acha números e termos exatos da regra."""
+    counts = [Counter(tokenize(doc.page_content)) for doc in docs]
+    sizes = [sum(c.values()) for c in counts]
+    average = sum(sizes) / len(sizes)
+    frequency = Counter(word for c in counts for word in c)
+    terms = set(tokenize(query))
+
+    def score(c: Counter, size: int) -> float:
+        return sum(
+            math.log(1 + (len(docs) - frequency[w] + 0.5) / (frequency[w] + 0.5)) * c[w] * (k1 + 1) / (c[w] + k1 * (1 - b + b * size / average))
+            for w in terms if c[w]
+        )
+
+    order = sorted(range(len(docs)), key=lambda i: -score(counts[i], sizes[i]))
+    return [docs[i] for i in order]
+
+
+@cache
+def get_corpus(ano: str) -> list[Document]:
+    """Todos os trechos de um concurso, lidos do índice, para a busca por palavras."""
+    data = get_vector_store().get(where={"edital": ano})
+    return [Document(page_content=text, metadata=meta) for text, meta in zip(data["documents"], data["metadatas"])]
+
+
+def fuse(*rankings: list[Document], k: int) -> list[Document]:
+    """Junta as listas por posição (reciprocal rank fusion): trechos bem colocados em mais de uma lista sobem."""
+    score, docs = {}, {}
+    for ranking in rankings:
+        for position, doc in enumerate(ranking):
+            score[doc.page_content] = score.get(doc.page_content, 0) + 1 / (60 + position + 1)
+            docs[doc.page_content] = doc
+    return [docs[text] for text in sorted(score, key=score.get, reverse=True)[:k]]
+
+
 def buscar(query: str, edital: str = "todos", k: int = K) -> list:
-    """Devolve os k trechos mais próximos de cada concurso pedido."""
+    """Devolve os k trechos mais próximos de cada concurso pedido, juntando a busca por significado e a por palavras."""
     anos = ["2024", "2026"] if edital == "todos" else [edital]
     store = get_vector_store()
-    return [doc for ano in anos for doc in store.similarity_search(query, k=k, filter={"edital": ano})]
+    return [
+        doc for ano in anos
+        for doc in fuse(store.similarity_search(query, k=k, filter={"edital": ano}), bm25(query, get_corpus(ano))[:k], k=k)
+    ]
 
 
 @tool

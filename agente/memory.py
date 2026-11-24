@@ -3,6 +3,7 @@ from langchain.messages import AnyMessage, RemoveMessage
 from langchain_core.language_models import BaseChatModel
 
 from .prompts import SUMMARY_PROMPT
+from .skills import LOAD_SKILL
 from .state import AgentState
 
 MAX_TURNS = 4  # acima disso, os turnos mais antigos viram resumo
@@ -14,10 +15,18 @@ def is_question(message: AnyMessage) -> bool:
     return message.type == "human" and not message.additional_kwargs.get("rewrite")
 
 
+def is_skill(message: AnyMessage) -> bool:
+    """Diz se a mensagem é uma chamada de load_skill ou o texto da skill carregada."""
+    if message.type == "tool":
+        return message.name == LOAD_SKILL
+    calls = getattr(message, "tool_calls", None)
+    return bool(calls) and all(call["name"] == LOAD_SKILL for call in calls)
+
+
 def intermediate(messages: list[AnyMessage], question: str) -> list[AnyMessage]:
-    """Devolve, no turno atual, as chamadas de ferramenta, os trechos recuperados e as instruções de reformulação."""
+    """Devolve, no turno atual, as chamadas de ferramenta, os trechos recuperados e as instruções de reformulação, menos as skills carregadas."""
     start = max((i for i, m in enumerate(messages) if is_question(m) and m.content == question), default=0)
-    return [m for m in messages[start + 1 :] if m.type == "tool" or getattr(m, "tool_calls", None) or not is_question(m) and m.type == "human"]
+    return [m for m in messages[start + 1 :] if not is_skill(m) and (m.type == "tool" or getattr(m, "tool_calls", None) or not is_question(m) and m.type == "human")]
 
 
 def make_compact(model: BaseChatModel):
@@ -38,4 +47,4 @@ def make_compact(model: BaseChatModel):
         update["messages"] = [RemoveMessage(id=message_id) for message_id in drop]
         return update
 
-    return compact
+    return compact

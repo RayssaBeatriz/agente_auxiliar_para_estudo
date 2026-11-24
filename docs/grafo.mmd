@@ -5,18 +5,28 @@ config:
 ---
 graph TD;
 	__start__([<p>__start__</p>]):::first
+	guard_input(guard_input)
 	start_turn(start_turn)
 	agent(agent)
+	skill_gate(skill_gate)
 	tools(tools)
 	rewrite(rewrite)
+	guard_output(guard_output)
+	compact(compact)
 	__end__([<p>__end__</p>]):::last
-	__start__ --> start_turn;
-	agent -.-> __end__;
-	agent -.-> tools;
+	__start__ --> guard_input;
+	agent -.-> guard_output;
+	agent -.-> skill_gate;
+	guard_input -.-> __end__;
+	guard_input -.-> start_turn;
+	guard_output --> compact;
 	rewrite --> agent;
+	skill_gate -.-> agent;
+	skill_gate -.-> tools;
 	start_turn --> agent;
 	tools -.-> agent;
 	tools -.-> rewrite;
+	compact --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

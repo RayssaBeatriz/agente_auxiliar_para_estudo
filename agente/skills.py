@@ -5,6 +5,8 @@ from pathlib import Path
 import yaml
 from langchain_core.tools import tool
 
+from .utils import text_of
+
 SKILLS_DIR = Path(__file__).resolve().parent / "skills_md"
 LOAD_SKILL = "load_skill"
 
@@ -30,3 +32,10 @@ def load_skill(name: str) -> str:
     if name not in validos:  # só nomes do catálogo
         return f"Erro: skill {name!r} não existe. Skills disponíveis: {sorted(validos)}"
     return (SKILLS_DIR / name / "SKILL.md").read_text(encoding="utf-8")
+
+
+def loaded_skills(messages: list) -> set[str]:
+    """Nomes das skills já carregadas com sucesso na conversa."""
+    chamadas = {c["id"]: c["args"].get("name") for m in messages for c in getattr(m, "tool_calls", None) or [] if c["name"] == LOAD_SKILL}
+    return {chamadas[m.tool_call_id] for m in messages if m.type == "tool" and m.name == LOAD_SKILL and m.tool_call_id in chamadas
+            and not text_of(m.content).startswith("Erro")}
