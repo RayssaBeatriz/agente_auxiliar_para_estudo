@@ -65,14 +65,16 @@ def estimar_posicao(edital: Literal["2024", "2026", "todos"], perfil: str, local
 
 
 @mcp.tool()
-def montar_cronograma_estudo(data_inicio: str, data_prova: str, horas_por_semana: float, edital: Edital = "2026",
+def montar_cronograma_estudo(horas_por_semana: float, data_inicio: str | None = None, data_prova: str | None = None,
+                             semanas: int | None = None, edital: Edital = "2026",
                              dificuldades: list[str] | None = None, facilidades: list[str] | None = None) -> dict:
-    """Monta um cronograma de estudo entre duas datas (formato AAAA-MM-DD): número de semanas, fases
-    (base, revisão, simulados) e horas por disciplina, proporcionais aos pontos da prova do edital de referência.
+    """Monta um cronograma de estudo: número de semanas, fases (base, revisão, simulados) e horas por disciplina,
+    proporcionais aos pontos da prova do edital de referência. O prazo vem da data da prova (data_inicio e
+    data_prova, formato AAAA-MM-DD) ou, sem data, do número de `semanas` até a prova; se vierem os dois, vale a data.
     `dificuldades` e `facilidades` são listas opcionais de disciplinas (ex.: ["inglês"]); as primeiras ganham mais
     horas e as segundas menos, sem nunca zerar nenhuma. Faz o cálculo de dias, então não calcule datas à mão.
-    Devolve erro se a prova não for posterior ao início."""
-    return core.montar_cronograma(edital, data_inicio, data_prova, horas_por_semana, dificuldades, facilidades)
+    Devolve erro se a prova não for posterior ao início ou se faltarem a data e as semanas."""
+    return core.montar_cronograma(edital, data_inicio, data_prova, horas_por_semana, dificuldades, facilidades, semanas)
 
 
 @mcp.tool()

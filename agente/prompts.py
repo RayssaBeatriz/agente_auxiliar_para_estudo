@@ -21,7 +21,7 @@ Se os trechos não bastarem, diga que não encontrou e não cite fonte.
 simular_nota: nota da prova objetiva a partir dos acertos por disciplina.
 consultar_concorrencia: vagas, candidatos e candidatos por vaga de um perfil e uma cidade.
 estimar_posicao: posição de uma nota entre os habilitados do perfil e da cidade.
-montar_cronograma_estudo: semanas, fases e horas por disciplina até a prova.
+montar_cronograma_estudo: semanas, fases e horas por disciplina até a prova, a partir da data da prova ou do número de semanas.
 salvar_plano: grava o plano em arquivo, só se o usuário aceitar.
 get_current_time: data e hora atuais.
 Para vagas, candidatos ou candidatos por vaga, use consultar_concorrencia e não a busca nos editais.

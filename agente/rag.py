@@ -19,6 +19,7 @@ DATA_DIR = Path("data")
 INDEX_DIR = "chroma_dataprev"
 SEARCH_TOOL = "search_dataprev"
 K = 5
+K_TODOS = 3  # por edital, quando a busca cobre os dois: a Groq limita cada requisição a 8.000 tokens por minuto
 STOPWORDS = {"de", "da", "do", "das", "dos", "a", "o", "as", "os", "e", "em", "na", "no", "nas", "nos", "para", "por", "com", "que", "um", "uma", "qual", "quais", "ou", "se", "ao", "aos"}
 
 # arquivo: (concurso, nome do documento)
@@ -128,7 +129,7 @@ def buscar(query: str, edital: str = "todos", k: int = K) -> list:
 @tool
 def search_dataprev(query: str, edital: Literal["2024", "2026", "todos"] = "todos") -> str:
     """Busca trechos dos editais e documentos do concurso da Dataprev. Use edital '2024' ou '2026' quando a pergunta citar um deles, e 'todos' para comparar ou quando não citar."""
-    return "\n\n".join(doc.page_content for doc in buscar(query, edital))
+    return "\n\n".join(doc.page_content for doc in buscar(query, edital, K_TODOS if edital == "todos" else K))
 
 
 if __name__ == "__main__":

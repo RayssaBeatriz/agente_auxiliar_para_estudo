@@ -19,7 +19,8 @@ from .skills import LOAD_SKILL, catalog, loaded_skills
 from .state import AgentState
 from .utils import text_of
 
-MAX_REWRITES = 2
+MAX_REWRITES = 1
+BUSCA_ANTIGA = 600  # caracteres que ficam de cada busca antiga do turno, para a requisição caber no limite de tokens
 RECURSION_LIMIT = 60
 PLANO = "plano-de-estudos"
 GATED = {"simular_nota": "diagnostico-de-desempenho", "estimar_posicao": "diagnostico-de-desempenho", "montar_cronograma_estudo": "plano-de-estudos"}  # ferramenta -> skill que a conduz
@@ -48,6 +49,14 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()):
         """Guarda a pergunta do turno e zera o contador de reescritas."""
         return {"question": state["messages"][-1].content, "rewrites": 0}
 
+    def trim_searches(messages: list) -> list:
+        """Encurta os resultados de busca antigos e mantém o último inteiro."""
+        last = max((i for i, m in enumerate(messages) if m.type == "tool" and m.name == SEARCH_TOOL), default=-1)
+        return [
+            m.model_copy(update={"content": text_of(m.content)[:BUSCA_ANTIGA]}) if m.type == "tool" and m.name == SEARCH_TOOL and i != last else m
+            for i, m in enumerate(messages)
+        ]
+
     def missing_step(state: AgentState, reply) -> str:
         """Lembrete para a resposta vazia ou para o plano que termina sem ter chamado montar_cronograma_estudo; vazio se estiver certo."""
         if reply.tool_calls:
@@ -64,19 +73,19 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()):
             called.update(call["name"] for call in getattr(message, "tool_calls", None) or [])
         if "montar_cronograma_estudo" in called:
             return ""
-        informed = re.search(r"\d{1,2}/\d{1,2}/\d{4}", text_of(state["question"]))  # a data já veio do usuário
+        informed = re.search(r"\d{1,2}/\d{1,2}/\d{4}|\d+ semanas?", text_of(state["question"]))  # a data ou as semanas já vieram do usuário
         if "?" in text and not informed:
             if "data" in text.lower() and "prova" in text.lower() and "get_current_time" not in called:
-                return "Não peça a data da prova agora. Execute os passos 2 e 3 da skill: chame get_current_time e search_dataprev e só depois responda."
+                return "Não peça o prazo agora. Execute o passo 2 da skill: chame get_current_time e search_dataprev e só depois responda."
             return ""
-        return "Você carregou a skill de plano de estudos, mas não chamou montar_cronograma_estudo. Chame-a com a data da prova, as horas por semana e as dificuldades informadas, e responda só com o que ela devolver."
+        return "Você carregou a skill de plano de estudos, mas não chamou montar_cronograma_estudo. Chame-a com as horas por semana, a data da prova ou as semanas informadas e as dificuldades, e responda só com o que ela devolver."
 
     async def agent(state: AgentState) -> dict:
         """Chama o modelo com o prompt de sistema, o resumo dos turnos antigos e o histórico recente."""
         system = base_prompt
         if state.get("summary"):
             system += f"\n\n# Resumo da conversa anterior\n{state['summary']}"
-        messages = [SystemMessage(system)] + state["messages"]
+        messages = [SystemMessage(system)] + trim_searches(state["messages"])
         reply = await model_with_tools.ainvoke(messages)
         reminder = missing_step(state, reply)
         if reminder:  # uma segunda chance, com o lembrete só nesta chamada

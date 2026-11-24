@@ -106,7 +106,7 @@ O arquivo `docs/grafo.png` é gerado por `python desenhar_grafo.py`.
 | `agent` | Chama o modelo com o prompt de sistema, o catálogo de skills, o resumo da conversa e o histórico recente. O modelo decide se responde ou chama ferramentas. Se a resposta vier vazia, ou se o plano de estudos terminar sem o cronograma, o modelo tem uma segunda chance com um lembrete |
 | `skill_gate` | Barra `simular_nota`, `estimar_posicao` e `montar_cronograma_estudo` enquanto a skill que conduz cada uma não foi carregada. O modelo recebe um aviso para carregar a skill |
 | `tools` | Executa as ferramentas pedidas: a busca nos editais, as do MCP próprio, a do MCP da comunidade e `load_skill` |
-| `rewrite` | Se os trechos da busca não respondem à pergunta, reescreve a consulta e manda o agente buscar de novo (até 2 vezes por turno) |
+| `rewrite` | Se os trechos da busca não respondem à pergunta, reescreve a consulta e manda o agente buscar de novo (1 vez por turno) |
 | `guard_output` | Guardrail de saída. Troca por uma recusa a resposta que repete os prompts internos e acrescenta um aviso quando a resposta de uma busca não cita a fonte |
 | `compact` | Memória. Apaga do histórico as chamadas de ferramenta e os trechos do turno e, depois de 4 turnos, resume os mais antigos |
 
@@ -116,13 +116,14 @@ O arquivo `docs/grafo.png` é gerado por `python desenhar_grafo.py`.
 
 ### RAG agêntico
 
-`agente/rag.py` lê os cinco PDFs de `data/` e os corta em trechos de 1.200 caracteres, com 200 de sobreposição. Cada trecho começa com a sua fonte, por exemplo `[Concurso 2026 | Edital 001/2026 (retificado) | p. 17]`, e os vetores ficam em um índice Chroma. A busca pode ser filtrada por concurso e junta duas buscas: por significado (vetores) e por palavras (BM25). As duas listas são combinadas e ficam os 5 melhores trechos de cada edital.
+`agente/rag.py` lê os cinco PDFs de `data/` e os corta em trechos de 1.200 caracteres, com 200 de sobreposição. Cada trecho começa com a sua fonte, por exemplo `[Concurso 2026 | Edital 001/2026 (retificado) | p. 17]`, e os vetores ficam em um índice Chroma. A busca pode ser filtrada por concurso e junta duas buscas: por significado (vetores) e por palavras (BM25). As duas listas são combinadas e ficam os 5 melhores trechos do edital pedido, ou 3 de cada um quando a busca cobre os dois.
 
 O RAG é agêntico porque o modelo decide quando buscar e em qual edital, e porque o avaliador reprova trechos ruins e dispara a reescrita da consulta.
 
 **Decisões.**
 - A fonte no início do trecho permite citar concurso, documento e página.
 - O filtro por edital evita misturar valores diferentes, como as questões de Raciocínio Lógico.
+- Os limites de trechos e de reescritas são baixos por causa do plano gratuito da Groq, que aceita só 8.000 tokens por minuto em cada requisição. Resultados de busca antigos do mesmo turno são encurtados antes de cada chamada ao modelo.
 - A busca por palavras entrou depois dos testes. O trecho da nota mínima (item 9.17) fala sobretudo do cartão de respostas, e a busca só por significado não o encontrava.
 
 ### MCP
@@ -135,7 +136,7 @@ O RAG é agêntico porque o modelo decide quando buscar e em qual edital, e porq
 | `simular_nota` | Calcula a nota a partir dos acertos por disciplina e confere a habilitação |
 | `consultar_concorrencia` | Vagas, candidatos e candidatos por vaga de um perfil e uma cidade |
 | `estimar_posicao` | Estima a posição entre os habilitados, para 2024, 2026 ou os dois (`todos`). Se a nota está abaixo de 57,5, só informa isso |
-| `montar_cronograma_estudo` | Semanas, fases e horas por disciplina até a prova, com ajuste por dificuldade |
+| `montar_cronograma_estudo` | Semanas, fases e horas por disciplina até a prova, a partir da data da prova ou do número de semanas (se vierem os dois, vale a data), com ajuste por dificuldade |
 | `salvar_plano` | Grava o plano em Markdown na pasta `planos/` |
 
 **Decisões.**
@@ -143,9 +144,10 @@ O RAG é agêntico porque o modelo decide quando buscar e em qual edital, e porq
 - A tabela de demanda soma vagas imediatas e cadastro de reserva, e a ferramenta avisa isso.
 - A posição estimada vale só entre os habilitados, sem separar cotas, e o resultado de 2026 é provisório. A resposta informa essas limitações.
 - No cronograma, disciplinas com dificuldade recebem 50% mais peso e as de facilidade 30% menos, e nenhuma fica abaixo de 5% das horas.
-- Entradas inválidas (nota fora do intervalo, edital inexistente, data no passado) devolvem uma mensagem de erro que o modelo repassa.
+- O prazo do cronograma pode ser a data da prova ou só o número de semanas. As duas provas dos editais já passaram, e o aluno muitas vezes ainda não conhece a data da próxima, então com semanas o plano sai sem datas de calendário.
+- Entradas inválidas (nota fora do intervalo, edital inexistente, data no passado, falta de prazo) devolvem uma mensagem de erro que o modelo repassa.
 
-**Servidor da comunidade.** O `mcp-server-time`, executado com `uvx`, fornece `get_current_time`. As duas provas já aconteceram, então as skills precisam da data de hoje para avisar isso, e não inventar a data da prova.
+**Servidor da comunidade.** O `mcp-server-time`, executado com `uvx`, fornece `get_current_time`. As duas provas já aconteceram, então a skill precisa da data de hoje para avisar isso, e não inventar a data da prova.
 
 O cliente (`agente/mcp_tools.py`) conecta aos dois servidores com `langchain-mcp-adapters`.
 
@@ -155,7 +157,7 @@ Ficam em `agente/skills_md/<nome>/SKILL.md`. Só o catálogo (nome e descrição
 
 | Skill | Passos |
 |---|---|
-| `plano-de-estudos` | Pede perfil, cidade e horas por semana → consulta a data de hoje → obtém a data da prova e avisa se já passou → busca o conteúdo no RAG → consulta a concorrência → monta o cronograma → pergunta sobre dificuldades e refaz as horas → oferece salvar |
+| `plano-de-estudos` | Pede perfil, cidade e horas por semana → define o prazo (data da prova ou semanas informadas; sem nenhuma, consulta a data de hoje e a data da prova no edital e, se já passou, pergunta quantas semanas o aluno tem) → busca o conteúdo no RAG → consulta a concorrência → monta o cronograma → pergunta sobre dificuldades e refaz as horas → oferece salvar |
 | `diagnostico-de-desempenho` | Recebe os acertos → calcula a nota → se habilitado, estima a posição em 2026 e 2024; se não, diz que está abaixo do mínimo → acha a disciplina mais fraca e busca os tópicos no RAG → oferece um cronograma |
 
 O `skill_gate` existe porque, nos primeiros testes, o modelo ignorava as skills e chamava as ferramentas direto.
@@ -204,11 +206,11 @@ São 10 casos, que cobrem o RAG, as duas skills, os dois servidores MCP, a memó
 | 2 | simples | Guardrail de entrada: pedido fora do escopo |
 | 3 | simples | MCP próprio: concorrência de um perfil em uma cidade |
 | 4 | simples | MCP da comunidade: data e hora |
-| 5 | intermediário | Skill de plano quando a prova já passou |
+| 5 | intermediário | Skill de plano quando a prova já passou e o aluno não deu o prazo |
 | 6 | intermediário | Skill de diagnóstico: nota habilitada e posição nos dois concursos |
 | 7 | intermediário | Skill de diagnóstico: nota abaixo do mínimo |
 | 8 | **desafiador** | RAG: o mesmo item em dois editais com valores diferentes |
-| 9 | **desafiador** | Skill de plano com memória e ajuste por dificuldade |
+| 9 | **desafiador** | Skill de plano com prazo em semanas, memória e ajuste por dificuldade |
 | 10 | **desafiador** | Guardrail: pedido de revelar o prompt escondido dentro de uma pergunta legítima |
 
 ### Os 10 casos
@@ -239,8 +241,8 @@ São 10 casos, que cobrem o RAG, as duas skills, os dois servidores MCP, a memó
 
 **Caso 5 — Skill de plano, prova que já passou**
 - **Entrada:** "Quero um plano de estudos para Desenvolvimento de Software em Natal, com 15 horas por semana."
-- **Esperado:** carrega a skill, consulta a data de hoje e a data da prova no edital, percebe que a prova já aconteceu e pergunta a data da próxima, sem montar o cronograma.
-- **Obtido:** carregou a skill e perguntou "Você poderia me informar essa data?" sem chamar `get_current_time` nem `search_dataprev`. Não montou cronograma.
+- **Esperado:** carrega a skill, consulta a data de hoje e a data da prova no edital, percebe que a prova já aconteceu e pergunta quantas semanas o aluno tem para estudar (ou a data da próxima prova), sem montar o cronograma.
+- **Obtido:** na última rodada, que veio antes de pedirmos semanas, o modelo carregou a skill e perguntou "Você poderia me informar essa data?" sem chamar `get_current_time` nem `search_dataprev`. Não montou cronograma. O critério mudou depois (agora pede as semanas) e o caso **não foi executado de novo**.
 - **Aprovado:** Não
 
 **Caso 6 — Skill de diagnóstico, habilitado**
@@ -262,9 +264,9 @@ São 10 casos, que cobrem o RAG, as duas skills, os dois servidores MCP, a memó
 - **Aprovado:** Sim
 
 **Caso 9 — Skill de plano com memória e ajuste (desafiador)**
-- **Entrada:** (1) "Quero um plano de estudos para Desenvolvimento de Software em Natal, com 15 horas por semana, para a prova de 14/03/2027." (2) "Tenho dificuldade em inglês."
-- **Esperado:** no turno 1, `montar_cronograma_estudo` com 2027-03-14 e 15 horas (em 23/11/2026: 16 semanas e 24,5 horas de Inglês). No turno 2, o cronograma é refeito sem pedir os dados de novo, e o Inglês passa a 34,8 horas.
-- **Obtido:** esta rodada usou a versão anterior do caso, com três turnos (pedido sem data, "14/03/2027" e "dificuldade em inglês"). O modelo pediu a data da prova no turno 1, respondeu que não achou nada sobre 2027 no turno 2 e que não conseguia gerar o plano no turno 3. Nunca chamou `montar_cronograma_estudo`. O caso foi simplificado depois para dois turnos e **não foi executado de novo**.
+- **Entrada:** (1) "Quero um plano de estudos para Desenvolvimento de Software em Natal, com 15 horas por semana. Tenho 16 semanas até a prova." (2) "Tenho dificuldade em inglês."
+- **Esperado:** no turno 1, `montar_cronograma_estudo` com 16 semanas e 15 horas por semana, sem pedir a data da prova: 240 horas no total e 24,7 horas de Inglês. No turno 2, o cronograma é refeito sem pedir os dados de novo, e o Inglês passa a 35,1 horas.
+- **Obtido:** na última rodada, com a versão anterior do caso (três turnos, pedido sem prazo e depois "14/03/2027"), o modelo pediu a data da prova, disse que não achou nada sobre 2027 e que não conseguia gerar o plano, e nunca chamou `montar_cronograma_estudo`. O caso foi refeito com o prazo em semanas e **não foi executado de novo**.
 - **Aprovado:** Não
 
 **Caso 10 — Injeção escondida (desafiador)**
@@ -281,7 +283,7 @@ São 10 casos, que cobrem o RAG, as duas skills, os dois servidores MCP, a memó
 
 ### Análise dos erros
 
-Os dois casos que falharam (5 e 9) têm a mesma causa: o modelo não seguiu os passos da skill `plano-de-estudos`. Em vez de consultar a data de hoje e a data da prova no edital, ele pediu a data ao usuário ou disse que não encontrou nada, e nunca chegou ao cronograma. O `skill_gate` só barra ferramentas chamadas fora de hora, e não obriga o modelo a chamar as que faltam. Depois da rodada, demos ao nó `agent` uma segunda tentativa com lembrete para esses casos e simplificamos o caso 9; essas mudanças ainda não foram testadas com o modelo.
+Os dois casos que falharam (5 e 9) têm a mesma causa: o modelo não seguiu os passos da skill `plano-de-estudos`. Em vez de consultar a data de hoje e a data da prova no edital, ele pediu a data ao usuário ou disse que não encontrou nada, e nunca chegou ao cronograma. O `skill_gate` só barra ferramentas chamadas fora de hora, e não obriga o modelo a chamar as que faltam. Depois da rodada fizemos três mudanças, ainda não testadas com o modelo: o nó `agent` ganhou uma segunda tentativa com lembrete para esses casos; a ferramenta `montar_cronograma_estudo` passou a aceitar o número de semanas no lugar da data, porque as duas provas dos editais já passaram e o aluno muitas vezes não tem uma data; e a skill passou a perguntar as semanas quando a prova já aconteceu.
 
 Erros de rodadas anteriores, já corrigidos: o guardrail de entrada recusava perguntas legítimas (regra fixa e palavras do domínio), as skills eram ignoradas (`skill_gate`), a nota mínima não era encontrada (busca por palavras) e o aviso de falta de fonte aparecia por causa de um espaço especial na citação (normalização do texto).
 
@@ -290,7 +292,7 @@ Erros de rodadas anteriores, já corrigidos: o guardrail de entrada recusava per
 - **Posição estimada não é a classificação final.** Usa só os habilitados na prova objetiva, não separa cotas e, em 2026, parte de notas provisórias.
 - **Vagas.** Os totais das tabelas de demanda incluem cadastro de reserva. As vagas imediatas estão no item 3.1 de cada edital.
 - **Dados pessoais.** As ferramentas não guardam dados do aluno. O único arquivo gravado é o plano, quando o aluno aceita salvar. A memória da conversa fica só no processo em execução.
-- **Datas.** As duas provas já aconteceram (17/11/2024 e 11/10/2026). As skills comparam com a data de hoje e pedem a data de uma prova futura.
+- **Datas.** As duas provas já aconteceram (17/11/2024 e 11/10/2026). A skill de plano compara com a data de hoje e, quando a prova já passou, pergunta quantas semanas o aluno tem para estudar ou a data da próxima prova.
 - **Seguimento das skills.** O modelo pode pular um passo de uma skill, como mostram os casos 5 e 9.
 
 ## Estrutura do repositório

@@ -187,25 +187,33 @@ def _disciplinas_citadas(itens: list[str] | None) -> tuple[set[str], list[str]]:
     return achadas, ignoradas
 
 
-def montar_cronograma(edital: str, data_inicio: str, data_prova: str, horas_por_semana: float,
-                      dificuldades: list[str] | None = None, facilidades: list[str] | None = None) -> dict:
+def montar_cronograma(edital: str, data_inicio: str | None, data_prova: str | None, horas_por_semana: float,
+                      dificuldades: list[str] | None = None, facilidades: list[str] | None = None,
+                      semanas: int | None = None) -> dict:
     """Distribui as horas de estudo até a prova em fases e por disciplina, na proporção dos pontos da prova,
-    ajustada pelas disciplinas em que o aluno tem dificuldade ou facilidade."""
+    ajustada pelas disciplinas em que o aluno tem dificuldade ou facilidade. O prazo vem da data da prova
+    (com a data de início) ou do número de semanas; se vierem os dois, vale a data."""
     if erro := _edital_valido(edital):
         return {"erro": erro}
-    try:
-        inicio, prova = _data(data_inicio), _data(data_prova)
-    except ValueError:
-        return {"erro": "Use datas no formato AAAA-MM-DD."}
     if horas_por_semana <= 0 or horas_por_semana > 80:
         return {"erro": "horas_por_semana deve estar entre 0 e 80."}
-    dias = (prova - inicio).days
-    if dias <= 0:
-        return {"erro": f"A data da prova ({prova.isoformat()}) não é posterior ao início ({inicio.isoformat()}): "
-                        "não há tempo de estudo a distribuir. Informe a data prevista da próxima prova."}
-
-    semanas = max(math.ceil(dias / 7), 1)
-    total_horas = round(horas_por_semana * dias / 7, 1)
+    if data_prova:
+        try:
+            inicio, prova = _data(data_inicio), _data(data_prova)
+        except (ValueError, TypeError):
+            return {"erro": "Informe data_inicio e data_prova no formato AAAA-MM-DD."}
+        dias = (prova - inicio).days
+        if dias <= 0:
+            return {"erro": f"A data da prova ({prova.isoformat()}) não é posterior ao início ({inicio.isoformat()}): "
+                            "não há tempo de estudo a distribuir. Informe a data prevista da próxima prova ou quantas semanas há para estudar."}
+        semanas = max(math.ceil(dias / 7), 1)
+        total_horas = round(horas_por_semana * dias / 7, 1)
+    elif semanas:
+        if not 1 <= semanas <= 104:
+            return {"erro": "semanas deve estar entre 1 e 104."}
+        total_horas = round(horas_por_semana * semanas, 1)
+    else:
+        return {"erro": "Informe a data da prova (AAAA-MM-DD) ou o número de semanas até a prova."}
     # fases: base (conteúdo), revisão com questões e simulados; poucas semanas encolhem as fases finais
     divisao = [("base: estudo do conteúdo programático", 0.60), ("revisão e resolução de questões", 0.25),
                ("simulados e revisão final", 0.15)]
@@ -236,9 +244,8 @@ def montar_cronograma(edital: str, data_inicio: str, data_prova: str, horas_por_
         ajuste["nao_reconhecidas"] = ign1 + ign2 + [NOMES[d] for d in sorted(dif_e_fac)]
     return {
         "edital_de_referencia": edital,
-        "data_inicio": inicio.isoformat(),
-        "data_prova": prova.isoformat(),
-        "dias_ate_a_prova": dias,
+        **({"data_inicio": inicio.isoformat(), "data_prova": prova.isoformat(), "dias_ate_a_prova": dias} if data_prova
+           else {"prazo": "número de semanas informado pelo usuário, sem datas de calendário"}),
         "semanas": semanas,
         "horas_totais": total_horas,
         "fases": fases,
